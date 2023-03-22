@@ -1,0 +1,111 @@
+
+#include <stdio.h>
+#include <stdint.h>
+#include <arpa/inet.h>
+#include <stdlib.h>
+int32_t read_uint32_be(uint8_t* data) {
+    return be32toh(*(uint32_t*)data);
+}
+
+int32_t read_int32_be(uint8_t* data) {
+    return (int32_t)read_uint32_be(data);
+}
+
+uint64_t read_uint64_be(uint8_t* data) {
+    return be64toh(*(uint64_t*)data);
+}
+
+int64_t read_int64_be(uint8_t* data) {
+    return (int64_t)read_uint64_be(data);
+}
+void get_file_infos(uint8_t* data, uint32_t* nb_nodes, uint32_t* nb_edges) {
+    *nb_nodes = read_uint32_be(data);
+    *nb_edges = read_uint32_be(data + 4);
+}
+
+void read_graph(const char* filename, int verbose) {
+// open file 
+    FILE* fd = fopen(filename, "rb");
+    if (fd == NULL) {
+        fprintf(stderr, "Cannot open file %s\n", filename);
+        return;
+    }
+
+//fseek() is used to move file pointer associated with a given file to a specific position.
+/*int fseek(FILE *pointer, long int offset, int position)
+pointer: pointer to a FILE object that identifies the stream.
+offset: number of bytes to offset from position
+position: position from where offset is added.
+ftell(f) tells us the current file position, the size here should be the offset from the end of the file to the beginning.*/
+
+    fseek(fd, 0L, SEEK_END);
+    size_t file_size = ftell(fd);
+    rewind(fd);
+
+
+    uint8_t* binary_data = (uint8_t*)malloc(file_size * sizeof(uint8_t));
+    if (binary_data == NULL) {
+        fprintf(stderr, "Cannot allocate memory for binary data\n");
+        fclose(fd);
+        return;
+    }
+
+    //reads data from the given stream into the array pointed to, by ptr.
+    fread(binary_data, sizeof(uint8_t), file_size, fd);
+    fclose(fd);
+
+
+    uint32_t nb_nodes, nb_edges;
+    get_file_infos(binary_data, &nb_nodes, &nb_edges);
+/* IS THIS IF VERBOSE REALLY USEFULL??*/
+
+
+    if (verbose) {
+        printf("Nombre de noeuds : %d, nombre de liens : %d\n", nb_nodes, nb_edges);
+    }
+     
+
+    uint8_t* data_ptr = binary_data + 8;
+    uint32_t from_node, to_node;
+    int32_t cost;
+
+    
+    // create link //int64_t
+    typedef struct {
+      uint32_t first;
+      uint32_t second;
+      int32_t third;
+   } my_struct;
+
+    int64_t (*links)[3] = malloc(nb_edges * sizeof(my_struct));
+    if (links == NULL) {
+        fprintf(stderr, "Couldn't allocate memory for links\n");}
+
+    for (int i = 0; i < nb_edges; i++) {
+        
+
+        from_node =  read_uint32_be(data_ptr+ i * 12);
+        //printf("%u", from_node);
+        to_node = read_uint32_be(data_ptr+ i * 12 + 4);
+        cost = read_int32_be(data_ptr+ i * 12 + 8);// HAS TO BE CHANGED IT SHOULD BE SIGNED
+
+        //printf("%lu", cost);
+
+        links[i][0] = from_node;//un entier non-signé sur 32b
+        links[i][1] = to_node;//un entier non-signé
+        links[i][2] = cost;//un entier signé
+
+        printf("%d %d %d\n", from_node, to_node, cost);
+        //printf("%d %d %d\n",links[i][0],links[i][1],links[i][2]);
+        
+    }
+
+    free(links); // jsp si on doit le garder ou pas en tt cas pas la  
+    free(binary_data);// bien mis
+}
+
+int main() {
+    read_graph("graph.bin", 1);
+    return 0;
+}
+ 
