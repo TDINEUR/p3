@@ -1,0 +1,117 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <stdint.h>
+#include <arpa/inet.h>
+
+int main() {
+    // Create some sample data
+    uint32_t nb_nodes=5;//
+    uint32_t source_node = 1;//ok
+
+    uint32_t dist[] = {0, 10, 15, 20};// not ok 
+
+    uint32_t path[] = {0, 1, 2, 3};// ok 
+    
+    //uint32_t path_length = 4;// ok 
+
+    uint32_t max_node = 3;//ok 
+    uint32_t sizepath=0;
+    for (uint32_t i = 0; i < NB_NODES; i++) {
+       if (path[i] != -1) {
+           sizepath+=1;
+           //printf("%d ", path[i]);
+      }
+    }
+
+    // Open the output file in binary mode
+    FILE* fp = fopen("data.bin", "wb");
+    if (!fp) {
+        perror("Failed to open file");
+        exit(EXIT_FAILURE);
+    }
+    /*fwrite(const void *ptr, size_t size, size_t nmemb, FILE *stream)
+    ptr − This is the pointer to the array of elements to be written.
+
+    size − This is the size in bytes of each element to be written.
+
+    nmemb − This is the number of elements, each one with a size of size bytes.
+
+    stream − This is the pointer to a FILE object that specifies an output stream.
+    */
+
+    // write the number of nodess
+    uint32_t be_number_node = htonl(nb_nodes);
+    fwrite(&be_source_node, sizeof(uint32_t), 1, fp);
+
+    for (uint32_t i = 0; i < NB_NODES; i++) {
+        // Write the source node
+        uint32_t be_source_node = htonl(source_node);
+        fwrite(&be_source_node, sizeof(uint32_t), 1, fp);
+        
+        //write the dest
+        uint32_t be_dest_node = htonl(i);
+        fwrite(&be_dest_node, sizeof(uint32_t), 1, fp);
+
+        //write cost 
+        uint32_t be_distance = htonl(dist[i]);
+        fwrite(&be_distance, sizeof(uint32_t), 1, fp);
+
+        // verifier comment est fait path
+
+        // write number of nodes in path
+
+        uint32_t be_path_length = htonl(sizepath);
+        fwrite(&be_path_length, sizeof(uint32_t), 1, fp);
+
+        // write path
+        for (int i = 0; i < 4; i++) {
+            uint32_t be_path = htonl(path[i]);
+            fwrite(&be_path, sizeof(uint32_t), 1, fp);
+        }
+
+        printf("Node %d: distance = %lld, path = %lld\n", i, dist[i], path[i]);
+
+    }
+
+
+    
+
+    // Write the distance array
+    for (int i = 0; i < 4; i++) {
+        uint32_t be_distance = htonl(distance[i]);
+        fwrite(&be_distance, sizeof(uint32_t), 1, fp);
+    }
+
+    // Write the path array
+    for (int i = 0; i < 4; i++) {
+        uint32_t be_path = htonl(path[i]);
+        fwrite(&be_path, sizeof(uint32_t), 1, fp);
+    }
+
+    // Write the path length
+    uint32_t be_path_length = htonl(path_length);
+    fwrite(&be_path_length, sizeof(uint32_t), 1, fp);
+
+    // Write the max node
+    uint32_t be_max_node = htonl(max_node);
+    fwrite(&be_max_node, sizeof(uint32_t), 1, fp);
+
+    // Close the file
+    fclose(fp);
+
+    return 0;
+}
+
+//htonl() function to convert the values to big endian byte order before writing them to the file,
+
+
+
+/////
+/* output file 
+1) nombre de noeud entier non-signé encodé sur 32 bits
+2) nombre denoeud ensemble 
+source-> dest non-signé encodé sur 32 bits
+cost pour aller la bas
+nombre de noeud qu'on traverse pour aller la bas => use get path
+triter le cas ou on a pas de plus court chemin!!!
+3) les valeur des noeuds */
