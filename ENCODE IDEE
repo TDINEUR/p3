@@ -107,6 +107,7 @@ int main() {
 
 
 /////
+enfait on doit itérer sur tt les noueds et def a chaque fois comme s puis mettre le plus lointain (get max!! )
 /* output file 
 1) nombre de noeud entier non-signé encodé sur 32 bits
 2) nombre denoeud ensemble 
