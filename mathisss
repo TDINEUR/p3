@@ -1,0 +1,158 @@
+#include <stdio.h>
+#include <stdint.h>
+#include <arpa/inet.h>
+#include <stdlib.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <math.h>
+// typedef
+#include <stdio.h>
+#include <stdbool.h>
+#include <limits.h>
+//
+// a verif
+#include <stdio.h>
+#include <stdint.h>
+#include <arpa/inet.h>
+#include <stdlib.h>
+#include <stdint.h>
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <stdint.h>
+#include <arpa/inet.h>
+
+
+
+uint32_t NB_NODES, NB_LINKS;
+int64_t* dist;
+uint32_t* path;
+int64_t (*links)[3];
+uint32_t* ri ;
+uint32_t* res;
+
+
+int32_t read_uint32_be(uint8_t* data) {
+    return be32toh(*(uint32_t*)data);
+}
+
+int32_t read_int32_be(uint8_t* data) {
+    return (int32_t)read_uint32_be(data);
+}
+
+uint64_t read_uint64_be(uint8_t* data) {
+    return be64toh(*(uint64_t*)data);
+}
+
+int64_t read_int64_be(uint8_t* data) {
+    return (int64_t)read_uint64_be(data);
+}
+
+void get_file_infos(uint8_t* data, uint32_t* NB_NODES, uint32_t* NB_LINKS) {
+    *NB_NODES = read_uint32_be(data);
+    *NB_LINKS = read_uint32_be(data + 4);
+}
+
+void read_graph(const char* filename, int verbose) {
+   FILE* fd = fopen(filename, "rb");
+   if (fd == NULL) {
+      fprintf(stderr, "Cannot open file %s\n", filename);
+      return;
+   }
+   fseek(fd, 0L, SEEK_END);
+   size_t file_size = ftell(fd);
+   rewind(fd);
+
+
+   uint8_t* binary_data = (uint8_t*)malloc(file_size * sizeof(uint8_t));
+   if (binary_data == NULL) {
+      fprintf(stderr, "Cannot allocate memory for binary data\n");
+      free(binary_data);
+      fclose(fd);
+      return;
+   }
+   fread(binary_data, sizeof(uint8_t), file_size, fd);
+   fclose(fd);
+
+   get_file_infos(binary_data, &NB_NODES, &NB_LINKS);
+
+   if (verbose) {
+      printf("Nombre de noeuds : %d, nombre de liens : %d\n", NB_NODES, NB_LINKS);
+   }
+   uint8_t* data_ptr = binary_data + 8;
+   uint32_t node_from, node_to;
+   int32_t cost;
+
+   typedef struct {
+   uint32_t node_from;
+   uint32_t node_to;
+   int32_t cost;
+   } Link;
+
+   links = malloc(NB_LINKS * sizeof(Link));
+   if (links == NULL) {
+      fprintf(stderr, "Couldn't allocate memory for links\n");
+      free(dist);
+      free(path);
+      free(binary_data);
+      return;
+   }
+   for (int i = 0; i < NB_LINKS; i++) {
+      node_from =  read_uint32_be(data_ptr+ i * 12);
+      node_to = read_uint32_be(data_ptr+ i * 12 + 4);
+      cost = read_int32_be(data_ptr+ i * 12 + 8);// HAS TO BE CHANGED IT SHOULD BE SIGNED
+      links[i][0] = node_from;//un entier non-signé sur 32b
+      links[i][1] = node_to;//un entier non-signé
+      links[i][2] = cost;//un entier signé
+
+      printf("%d %d %d\n", node_from, node_to, cost);  
+   }
+   free(binary_data);// bien mis
+   //free(dist);
+}
+
+
+void encode( uint32_t NB_NODES){
+   
+   FILE* fp = fopen("data.bin", "wb");
+   if (!fp) {
+      perror("Failed to open file");
+      exit(EXIT_FAILURE);
+   }
+   uint32_t be_number_node = htonl(NB_NODES);
+   //printf("The type of NB_NODES is: %zu bytes\n", sizeof(NB_NODES));//4 donc ok good type 
+   fwrite(&be_number_node, sizeof(uint32_t), 1, fp);
+   fclose(fp);
+   
+}
+
+int main() {
+   bool verbose = true;
+   read_graph("graph.bin", 1);
+   free(links);
+   
+   dist = (int64_t*)malloc(NB_NODES * sizeof(int64_t));
+
+   if (dist == NULL) {
+      fprintf(stderr, "Cannot allocate memory for dist array\n");
+      
+   }
+
+   // initialize path 
+   path = (uint32_t*)malloc(NB_NODES * sizeof(uint32_t));// size good defined
+   ri= (uint32_t*)malloc(NB_NODES * sizeof(uint32_t));
+   res= (uint32_t*)malloc(NB_NODES * sizeof(uint32_t));
+   if (path == NULL) {
+      fprintf(stderr, "Cannot allocate memory for path array\n");
+      
+   } 
+   encode(NB_NODES);
+   free(path);
+   free(ri);
+   free(res);
+   free(dist);
+   return 0;
+
+}
