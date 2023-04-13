@@ -1,0 +1,201 @@
+
+typedef struct {
+    int64_t (*l)[3];
+    uint32_t source;
+    uint32_t NB_NODES;
+    uint32_t NB_LINKS;
+    int64_t *dist;
+    uint32_t *path;
+    uint32_t start;
+    uint32_t end;
+} thread_arg;
+
+
+pthread_barrier_t barrier; // declare the barrier here as a global variable
+pthread_mutex_t lock; // also declare the lock as a global variable
+uint32_t s;
+
+
+void *bellman_ford_thread(void *thread_id);
+
+bool bellman_ford(int64_t (*l)[3], uint32_t source,uint32_t NB_NODES, uint32_t NB_LINKS){
+
+   links = l;
+   s = source;
+
+
+   int64_t* dist=(int64_t*) malloc(NB_NODES * sizeof(int64_t));
+   if (dist == NULL) {
+        fprintf(stderr, "Cannot allocate memory for dist array\n");  
+        return false;
+    }
+
+   uint32_t* path=(uint32_t*) malloc(NB_NODES * sizeof(uint32_t));
+   if (path == NULL) {
+        fprintf(stderr, "Cannot allocate memory for path array\n");
+        free(dist);
+        return false;
+    }
+
+   for (uint32_t i = 0; i < NB_NODES; i++) {
+        dist[i] = INT64_MAX;
+        path[i] = 0;
+    }
+    dist[s] = 0;
+
+   
+
+   pthread_t threads[NUM_THREADS];
+
+
+   thread_arg args[NUM_THREADS];
+
+   pthread_barrier_init(&barrier, NULL, NUM_THREADS);
+   pthread_mutex_init(&lock, NULL);
+
+   for (uint32_t i = 0; i < NUM_THREADS; i++) {
+        uint32_t start = i*( NB_LINKS / NUM_THREADS);
+
+        printf("yo im the starting point:%d\n", start);
+
+        uint32_t end = (i + 1)*(NB_LINKS / NUM_THREADS);
+
+        if (i == 3) end = NB_LINKS;
+
+        args[i].l = links;
+        args[i].source = s;
+        args[i].NB_NODES = NB_NODES;
+        args[i].NB_LINKS = NB_LINKS;
+        args[i].dist = dist;
+        args[i].path = path;
+        args[i].start = start;
+        args[i].end = end;
+        pthread_create(&threads[i], NULL, bellman_ford_thread, &args[i]);
+    }
+
+   for (uint32_t i = 0; i < NUM_THREADS; i++) {
+      pthread_join(threads[i], NULL);
+      
+   }
+   printf("bell");
+
+   for (uint32_t i = 0; i < NB_NODES; i++) {
+   
+   printf("Node %d: distance = %lu, path = %u\n", i, dist[i], path[i]);
+   }
+
+// virer les locks car plus besoins
+   pthread_mutex_destroy(&lock);
+   pthread_barrier_destroy(&barrier);
+   free(dist);
+   free(path);
+
+   return true;
+}
+
+/*il est possible que tt links passe dedans!*/
+
+void *bellman_ford_thread(void *arg) {
+    thread_arg *args = (thread_arg*) arg;
+    int64_t (*links)[3] = args->l;
+    uint32_t s = args->source;
+    uint32_t NB_NODES = args->NB_NODES;
+    uint32_t NB_LINKS = args->NB_LINKS;
+    int64_t *dist = args->dist;
+    uint32_t *path = args->path;
+    uint32_t start = args->start;
+    uint32_t end = args->end;
+
+    const int64_t INF = INT64_MAX;
+
+   
+   bool verbose = true; 
+
+   // SPEED UP
+
+   for (uint32_t i = 0; i < NB_NODES ; i++) {//ou -1?
+
+      for (uint32_t j = start; j < end; j ++) {
+        printf("%d\n", j);
+         
+         uint32_t node_from = links[j][0]; 
+         uint32_t node_to =links[j][1];
+         int32_t cost = links[j][2];
+
+         if (dist[node_from] != INT64_MAX && dist[node_to] > dist[node_from] + cost) {
+            pthread_mutex_lock(&lock);
+            dist[node_to] = dist[node_from] + cost;
+            path[node_to] = node_from;
+            pthread_mutex_unlock(&lock);
+         }
+        /* piste d amelioration vitesse
+         uint32_t node_from_0 = links[j][0];
+         uint32_t node_from_1 = links[j+1][0];
+         uint32_t node_from_2 = links[j+2][0];
+         uint32_t node_from_3 = links[j+3][0];
+         uint32_t node_to_0 = links[j][1];
+         uint32_t node_to_1 = links[j+1][1];
+         uint32_t node_to_2 = links[j+2][1];
+         uint32_t node_to_3 = links[j+3][1];
+         int32_t cost_0 = links[j][2];
+         int32_t cost_1 = links[j+1][2];
+         int32_t cost_2 = links[j+2][2];
+         int32_t cost_3 = links[j+3][2];
+
+         if (dist[node_from_0] != INT64_MAX && dist[node_to_0] > dist[node_from_0] + cost_0) {
+            pthread_mutex_lock(&lock);
+            dist[node_to_0] = dist[node_from_0] + cost_0;
+            path[node_to_0] = node_from_0;
+            pthread_mutex_unlock(&lock);
+         }
+
+         if (dist[node_from_1] != INT64_MAX && dist[node_to_1] > dist[node_from_1] + cost_1) {
+            pthread_mutex_lock(&lock);
+            dist[node_to_1] = dist[node_from_1] + cost_1;
+            path[node_to_1] = node_from_1;
+            pthread_mutex_unlock(&lock);
+         }
+
+         if (dist[node_from_2] != INT64_MAX && dist[node_to_2] > dist[node_from_2] + cost_2) {
+            pthread_mutex_lock(&lock);
+            dist[node_to_2] = dist[node_from_2] + cost_2;
+            path[node_to_2] = node_from_2;
+            pthread_mutex_unlock(&lock);
+         }
+
+         if (dist[node_from_3] != INT64_MAX && dist[node_to_3] > dist[node_from_3] + cost_3) {
+            pthread_mutex_lock(&lock);
+            dist[node_to_3] = dist[node_from_3] + cost_3;
+            path[node_to_3] = node_from_3;
+            pthread_mutex_unlock(&lock);
+         }*/
+      }
+   pthread_barrier_wait(&barrier);
+
+   }
+   
+
+   //pthread_barrier_wait(&barrier);
+
+   for (uint32_t j = start; j < end; j++) {
+      uint32_t node_from = links[j][0];
+      uint32_t node_to = links[j][1];
+      int32_t cost = links[j][2];
+
+      if (dist[node_from] != INT64_MAX && dist[node_to] > dist[node_from] + cost) {
+         pthread_mutex_lock(&lock);
+         if (verbose) {
+               printf("Negative cycle detected\n");
+         }
+         for (uint32_t i = 0; i < NB_NODES; i++) {
+               dist[i] = INT64_MAX;
+               path[i] = 0;
+         }
+         dist[s] = 0;
+         pthread_mutex_unlock(&lock);
+         pthread_exit(NULL);
+         
+      }
+   }
+   pthread_exit(NULL);
+}
