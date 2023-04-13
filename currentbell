@@ -1,0 +1,446 @@
+//Threads
+#include <stdio.h>
+#include <stdint.h>
+#include <arpa/inet.h>
+#include <stdlib.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <math.h>
+
+#include <stdio.h>
+#include <stdbool.h>
+#include <limits.h>
+
+#include <stdio.h>
+#include <stdint.h>
+#include <arpa/inet.h>
+#include <stdlib.h>
+#include <stdint.h>
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <stdint.h>
+#include <arpa/inet.h>
+#include <pthread.h>
+
+
+#include <pthread.h>
+#include <pthread.h>
+#include <math.h>
+#include <math.h>
+#include <stdint.h>
+#include <stdbool.h>
+#include <stdlib.h>
+#include <stdio.h>
+#include <limits.h>
+
+
+
+uint32_t NB_NODES, NB_LINKS;
+//int64_t* dist;
+//uint32_t* path;
+int64_t (*links)[3];
+uint32_t* ri ;
+uint32_t* res;
+
+
+//permettent le passage en bigendian
+
+int32_t read_uint32_be(uint8_t* data) {
+    return be32toh(*(uint32_t*)data);
+}
+
+int32_t read_int32_be(uint8_t* data) {
+    return (int32_t)read_uint32_be(data);
+}
+
+uint64_t read_uint64_be(uint8_t* data) {
+    return be64toh(*(uint64_t*)data);
+}
+
+int64_t read_int64_be(uint8_t* data) {
+    return (int64_t)read_uint64_be(data);
+}
+
+
+void get_file_infos(uint8_t* data, uint32_t* NB_NODES, uint32_t* NB_LINKS) {
+    *NB_NODES = read_uint32_be(data);
+    *NB_LINKS = read_uint32_be(data + 4);
+}
+
+
+
+
+void read_graph(const char* filename, int verbose) {
+   FILE* fd = fopen(filename, "rb");
+   if (fd == NULL) {
+      fprintf(stderr, "Cannot open file %s\n", filename);
+      return;
+   }
+   fseek(fd, 0L, SEEK_END);
+   size_t file_size = ftell(fd);
+   rewind(fd);
+
+   uint8_t* binary_data = (uint8_t*)malloc(file_size * sizeof(uint8_t));
+
+   if (binary_data == NULL) {
+      fprintf(stderr, "Cannot allocate memory for binary data\n");
+      free(binary_data);
+      fclose(fd);
+      return;
+   }
+
+   fread(binary_data, sizeof(uint8_t), file_size, fd);
+   fclose(fd);
+
+
+   get_file_infos(binary_data, &NB_NODES, &NB_LINKS);
+
+   uint8_t* data_ptr = binary_data + 8;
+   uint32_t node_from, node_to;
+   int32_t cost;
+
+   
+   links = malloc(NB_LINKS * sizeof(int64_t[3]));
+   if (links == NULL) {
+      fprintf(stderr, "Couldn't allocate memory for links\n");
+      //free(dist);                                              /// BLC ONPEUT VIRER CA JE PENSE
+      //free(path);
+      free(binary_data);
+      return;
+   }
+
+   for (uint32_t i = 0; i < NB_LINKS; i++) {
+      node_from =  read_uint32_be(data_ptr+ i * 12);
+      node_to = read_uint32_be(data_ptr+ i * 12 + 4);
+      cost = read_int32_be(data_ptr+ i * 12 + 8);
+      
+      links[i][0] = node_from;
+      links[i][1] = node_to;
+      links[i][2] = cost;
+   }
+   
+
+   free(binary_data);
+   
+}
+
+
+
+
+
+
+
+
+
+#define NUM_THREADS 4
+
+
+typedef struct {
+    int64_t (*l)[3];
+    uint32_t source;
+    uint32_t NB_NODES;
+    uint32_t NB_LINKS;
+    int64_t *dist;
+    uint32_t *path;
+    uint32_t start;
+    uint32_t end;
+} thread_arg;
+
+
+pthread_barrier_t barrier; // declare the barrier here as a global variable
+pthread_mutex_t lock; // also declare the lock as a global variable
+uint32_t s;
+
+
+void *bellman_ford_thread(void *arg);
+
+bool bellman_ford(int64_t (*l)[3], uint32_t source,uint32_t NB_NODES, uint32_t NB_LINKS){
+
+   links = l;
+   s = source;
+   //int64_t dist[NB_NODES];
+   //uint32_t path[NB_NODES];
+
+   // faudrait pas pointer ici
+   //int64_t dist=malloc(NB_NODES * sizeof(int64_t));
+   int64_t* dist=(int64_t*) malloc(NB_NODES * sizeof(int64_t));
+   if (dist == NULL) {
+        fprintf(stderr, "Cannot allocate memory for dist array\n");  
+        return false;
+    }
+
+   //uint32_t path=malloc(NB_NODES * sizeof(uint32_t));
+   uint32_t* path=(uint32_t*) malloc(NB_NODES * sizeof(uint32_t));
+   if (path == NULL) {
+        fprintf(stderr, "Cannot allocate memory for path array\n");
+        free(dist);
+        return false;
+    }
+
+   for (uint32_t i = 0; i < NB_NODES; i++) {
+        dist[i] = INT64_MAX;
+        path[i] = 0;
+    }
+    dist[s] = 0;
+
+   
+
+   pthread_t threads[NUM_THREADS];
+
+   //thread_arg* args = malloc(NUM_THREADS * sizeof(thread_arg));
+   thread_arg* args = (thread_arg*) malloc(NUM_THREADS * sizeof(thread_arg));
+    /*if (thread_arg == NULL) {
+        fprintf(stderr, "Cannot allocate memory for thread arguments\n");
+        free(dist);
+        free(path);
+        return false;
+    }*/
+    //thread_arg args[NUM_THREADS];
+
+   pthread_barrier_init(&barrier, NULL, NUM_THREADS);
+   pthread_mutex_init(&lock, NULL);
+
+   for (uint32_t i = 0; i < NUM_THREADS; i++) {
+        uint32_t start = i*( NB_LINKS / NUM_THREADS);
+
+        printf("yo im the starting point:%d\n", start);
+
+        uint32_t end = (i + 1)*(NB_LINKS / NUM_THREADS);
+
+        if (i == 3) end = NB_LINKS;
+
+        args[i].l = links;
+        args[i].source = s;
+        args[i].NB_NODES = NB_NODES;
+        args[i].NB_LINKS = NB_LINKS;
+        args[i].dist = dist;
+        args[i].path = path;
+        args[i].start = start;
+        args[i].end = end;
+        pthread_create(&threads[i], NULL, bellman_ford_thread, &args[i]);
+    }
+
+   for (uint32_t i = 0; i < NUM_THREADS; i++) {
+      pthread_join(threads[i], NULL);
+      
+   }
+
+
+   printf("bell");
+
+   for (uint32_t i = 0; i < NB_NODES; i++) {
+   
+   printf("Node %d: distance = %lu, path = %u\n", i, dist[i], path[i]);
+   }
+
+// virer les locks car plus besoins
+   pthread_mutex_destroy(&lock);
+   pthread_barrier_destroy(&barrier);
+   //free(dist);
+   //free(path);
+
+   return true;
+}
+
+/*il est possible que tt links passe dedans!*/
+
+void *bellman_ford_thread(void *arg) {
+    thread_arg *args = (thread_arg*) arg;
+    int64_t (*links)[3] = args->l;
+    uint32_t s = args->source;
+    uint32_t NB_NODES = args->NB_NODES;
+    uint32_t NB_LINKS = args->NB_LINKS;
+    int64_t *dist = args->dist;
+    uint32_t *path = args->path;
+    uint32_t start = args->start;
+    uint32_t end = args->end;
+
+    const int64_t INF = INT64_MAX;
+
+   
+   bool verbose = true; 
+
+   // SPEED UP
+
+   for (uint32_t i = 0; i < NB_NODES ; i++) {//ou -1?
+
+      for (uint32_t j = start; j < end; j ++) {
+        printf("%d\n", j);
+         
+         uint32_t node_from = links[j][0]; 
+         uint32_t node_to =links[j][1];
+         int32_t cost = links[j][2];
+
+         if (dist[node_from] != INT64_MAX && dist[node_to] > dist[node_from] + cost) {
+            pthread_mutex_lock(&lock);
+            dist[node_to] = dist[node_from] + cost;
+            path[node_to] = node_from;
+            pthread_mutex_unlock(&lock);
+         }
+      }
+   pthread_barrier_wait(&barrier);
+
+   }
+   
+
+   //pthread_barrier_wait(&barrier);
+
+   for (uint32_t j = start; j < end; j++) {
+      uint32_t node_from = links[j][0];
+      uint32_t node_to = links[j][1];
+      int32_t cost = links[j][2];
+
+      if (dist[node_from] != INT64_MAX && dist[node_to] > dist[node_from] + cost) {
+         pthread_mutex_lock(&lock);
+         if (verbose) {
+               printf("Negative cycle detected\n");
+         }
+         for (uint32_t i = 0; i < NB_NODES; i++) {
+               dist[i] = INT64_MAX;
+               path[i] = 0;
+         }
+         dist[s] = 0;
+         pthread_mutex_unlock(&lock);
+         pthread_exit(NULL);
+         
+      }
+   }
+   pthread_exit(NULL);
+}
+
+/// le probleme vient de la facons d'ont on veut acceder a dist
+/*This is because dist is not defined as a global variable, but as a member of the thread_arg struct.
+ Therefore, you need to pass the thread_arg struct to these functions to access the dist array.
+*/
+/*
+typedef struct {
+    uint32_t node_idx;
+    int64_t FINALdist;
+} NodeDist;
+
+typedef struct {
+    const int64_t* dist;
+    uint32_t start_node;
+    uint32_t end_node;
+    NodeDist* max_node_dist;
+    pthread_mutex_t* mutex;
+} ThreadData;
+
+void* get_max_thread(void* arg2);
+
+NodeDist get_max(const int64_t *dist, uint32_t s, uint32_t NB_NODES) {
+    NodeDist max_node_dist = {s, INT64_MIN};
+    
+    pthread_t threads[NUM_THREADS];
+
+    ThreadData data[NUM_THREADS];
+    pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
+    
+    uint32_t nodes_per_thread = NB_NODES / NUM_THREADS;
+
+    uint32_t start_node = 0;
+    uint32_t end_node = nodes_per_thread;
+    
+    for (int i = 0; i < NUM_THREADS; i++) {
+        data[i].dist = dist;
+        data[i].start_node = start_node;
+        data[i].end_node = end_node;
+        data[i].max_node_dist = &max_node_dist;
+        data[i].mutex = &mutex;
+        pthread_create(&threads[i], NULL, get_max_thread, &data[i]);
+        
+        start_node += nodes_per_thread;
+        end_node += nodes_per_thread;
+    }
+    
+    for (int i = 0; i < NUM_THREADS; i++) {
+        pthread_join(threads[i], NULL);
+    }
+     // check if any nodes are not covered by the threads
+    if (end_node < NB_NODES) {
+        ThreadData extra_data = {
+            .dist = dist,
+            .start_node = end_node,
+            .end_node = NB_NODES,
+            .max_node_dist = &max_node_dist,
+            .mutex = &mutex
+        };
+        get_max_thread(&extra_data);
+    }
+    
+    if (max_node_dist.FINALdist == INT64_MIN) {
+        if (dist[s] != INT64_MAX && dist[s] >= max_node_dist.FINALdist) {
+            max_node_dist.FINALdist = dist[s];
+        }
+    }
+    
+    printf("Maximum node: %u, Maximum cost: %ld\n", max_node_dist.node_idx, max_node_dist.FINALdist);
+    return max_node_dist;
+}
+*/
+
+/*
+void* get_max_thread(void* arg2) {
+    ThreadData* data = (ThreadData*)arg2;
+    
+    
+    const int64_t* dist = data->dist;
+    uint32_t start_node = data->start_node;
+    uint32_t end_node = data->end_node;
+    NodeDist* max_node_dist = data->max_node_dist;
+    pthread_mutex_t* mutex = data->mutex;
+    
+
+    //printf("%ld\n",dist[0]);
+
+    int64_t max_cost = INT64_MIN;
+
+    uint32_t max_node = start_node;
+    uint32_t node_idx = start_node;*/
+
+    /*In this case, it is likely that the dist array in ThreadData is not being properly initialized, 
+    causing the error when you try to read from it in the get_max_thread function. To fix this,
+     you should make sure that the dist array is properly initialized before creating the threads.*/
+
+   /* for (; node_idx < end_node; node_idx++) {
+        if (node_idx != max_node_dist->node_idx && dist[node_idx] != INT64_MAX && dist[node_idx] >=max_cost) {
+            max_cost = dist[node_idx];
+            max_node = node_idx;
+        }
+    }
+    
+    pthread_mutex_lock(mutex);
+    if (max_cost > max_node_dist->FINALdist) {
+        max_node_dist->FINALdist = max_cost;
+        max_node_dist->node_idx = max_node;
+    }
+    pthread_mutex_unlock(mutex);
+    
+    return NULL;
+}*/
+
+
+
+
+int main() {
+    int64_t* dist;
+    uint32_t* path;
+
+   read_graph("graph.bin", 1);
+   uint32_t source_node = 0;  // Sommet source.
+   //bool verbose = true;  // Afficher les messages de debug.
+   printf("notre nombre de n %d  \n",NB_NODES);
+   bellman_ford(links, source_node,NB_NODES, NB_LINKS);
+
+   //get_max(dist,source_node,NB_NODES);
+
+   free(links);
+   free(path);  
+   free(dist);
+   
+
+   return 0; 
+}
