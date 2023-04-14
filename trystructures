@@ -1,0 +1,218 @@
+
+/*
+void bellman_ford(link_t *links,
+    uint32_t nb_links, uint32_t nb_nodes, uint32_t source,
+    int64_t *distance, int32_t *preced, bool verbose) {
+    int64_t dist[nb_nodes];
+    int32_t path[nb_nodes];
+
+    uint32_t i;
+    for (i = 0; i < nb_nodes; i++) {
+        dist[i] = INT64_MAX;
+        path[i] = -1;
+    }
+    dist[source] = 0;
+
+    // Itération de Bellman-Ford.
+    uint32_t j;
+    for (i = 0; i < nb_nodes-1; i++) {
+        for (j = 0; j < nb_links; j++) {
+            uint32_t from = links[j].from;
+            uint32_t to = links[j].to;
+            int32_t cost = links[j].cost;
+            if (dist[from] != INT64_MAX && dist[to] > dist[from]+cost) {
+                dist[to] = dist[from] + cost;
+                path[to] = from;
+            }
+        }
+    }
+
+    // Détection de cycle négatif.
+    for (j = 0; j < nb_links; j++) {
+        uint32_t from = links[j].from;
+        uint32_t to = links[j].to;
+        int32_t cost = links[j].cost;
+        if (dist[from] != INT64_MAX && dist[to] > dist[from] + cost) {
+            if (verbose) printf("Cycle négatif détecté\n");
+            for (i = 0; i < nb_nodes; i++) {
+                dist[i] = INT64_MAX;
+                path[i] = -1;
+            }
+            dist[source] = 0;
+        }
+    }
+    memcpy(distance, dist, sizeof(int64_t)*nb_nodes);
+    memcpy(preced, path, sizeof(int32_t)*nb_nodes);
+    return;
+}*/
+
+
+DistPath bellman_ford(link_t *links,
+    uint32_t nb_links, uint32_t nb_nodes, uint32_t source, bool verbose) {
+
+    DistPath dp;
+    uint32_t i, j;
+    for (i = 0; i < nb_nodes; i++) {
+        dp.dist[i] = INT64_MAX;
+        dp.path[i] = -1;
+    }
+    dp.dist[source] = 0;
+
+    // Itération de Bellman-Ford.
+    for (i = 0; i < nb_nodes-1; i++) {
+        for (j = 0; j < nb_links; j++) {
+            uint32_t from = links[j].from;
+            uint32_t to = links[j].to;
+            int32_t cost = links[j].cost;
+            if (dp.dist[from] != INT64_MAX && dp.dist[to] > dp.dist[from]+cost) {
+                dp.dist[to] = dp.dist[from] + cost;
+                dp.path[to] = from;
+            }
+        }
+    }
+
+    // Détection de cycle négatif.
+    for (j = 0; j < nb_links; j++) {
+        uint32_t from = links[j].from;
+        uint32_t to = links[j].to;
+        int32_t cost = links[j].cost;
+        if (dp.dist[from] != INT64_MAX && dp.dist[to] > dp.dist[from] + cost) {
+            if (verbose) printf("Cycle négatif détecté\n");
+            for (i = 0; i < nb_nodes; i++) {
+                dp.dist[i] = INT64_MAX;
+                dp.path[i] = -1;
+            }
+            dp.dist[source] = 0;
+        }
+    }
+
+    return dp;
+}
+
+
+/*
+void get_max(const int64_t *dist, uint32_t nb_nodes,
+    uint32_t s, int64_t *max_c, uint32_t *max_n){
+    int64_t max_cost = INT64_MIN;
+    uint32_t max_node = s;
+    uint32_t node_idx;
+    for(node_idx = 0; node_idx < nb_nodes; node_idx++){
+        if(node_idx != s && dist[node_idx] != INT64_MAX && dist[node_idx] > max_cost) {
+            //if (dist[node_idx] == max_cost && max_node < node_idx) continue;
+            max_cost = dist[node_idx];
+            max_node = node_idx;
+        }
+    }
+    if (max_cost == INT64_MIN){
+        if (dist[s] != INT64_MAX && dist[s] >= max_cost) {
+            max_cost = dist[s];
+        }
+    }
+    /// not sure about this
+    
+    if(max_cost == INT64_MAX){
+        max_cost = 0;
+        max_node = s;
+    }
+   /* memcpy(max_c, &max_cost, sizeof(int64_t));
+    memcpy(max_n, &max_node, sizeof(uint32_t));
+    return;
+}*/
+
+
+
+MaxResult get_max(int64_t *dist, uint32_t nb_nodes,
+    uint32_t s){
+
+    MaxResult result;
+    result.max_cost = INT64_MIN;
+    result.max_node = s;
+
+    uint32_t node_idx;
+    for(node_idx = 0; node_idx < nb_nodes; node_idx++){
+        if(node_idx != s && dist[node_idx] != INT64_MAX && dist[node_idx] > result.max_cost) {
+            
+            result.max_cost = dist[node_idx];
+            result.max_node = node_idx;
+        }
+    }
+    if (result.max_cost == INT64_MIN){
+        if (dist[s] != INT64_MAX && dist[s] >= result.max_cost) {
+            result.max_cost = dist[s];
+        }
+    }
+    return result;
+}
+
+/*
+uint32_t* get_path(uint32_t dest, uint32_t source,
+    const int32_t *path, uint32_t *size){
+    uint32_t sizer = 1;
+    uint32_t *r = malloc(sizeof(uint32_t)*sizer);
+
+    if (r == NULL) return NULL;
+
+    if (path[dest] == -1) {
+        r[sizer-1] = source;
+        memcpy(size, &sizer, sizeof(uint32_t));
+        return r;
+    }
+    r[sizer-1] = dest;
+
+    uint32_t i = dest;
+    while(i != source){
+        sizer++;
+        uint32_t *nr = realloc(r, sizer*sizeof(uint32_t));
+        if (nr == NULL) {
+            free(r);
+            return NULL;
+        }
+        r = nr;
+        r[sizer-1] = path[i];
+        i = path[i];
+    }
+    memcpy(size, &sizer, sizeof(uint32_t));
+    return r;
+}*/
+
+
+PathResult get_path(uint32_t dest, uint32_t source, const int32_t *path) {
+    
+    PathResult pr;
+    uint32_t sizer = 1;
+    uint32_t *r = malloc(sizeof(uint32_t) * sizer);
+
+    /*if (r == NULL) {
+        return (PathResult){NULL, 0};
+    }
+
+    if (path[dest] == -1) {
+        r[sizer-1] = source;
+        return (PathResult){r, sizer};
+    }*/
+
+    r[sizer-1] = dest;
+
+    uint32_t i = dest;
+    while(i != source){
+        sizer++;
+        uint32_t *nr = realloc(r, sizer * sizeof(uint32_t));
+        if (nr == NULL) {
+            free(r);
+            pr.path=NULL;
+            pr.size=0;
+            
+        }
+        r = nr;
+        r[sizer-1] = path[i];
+        i = path[i];
+    }
+    uint32_t *res= malloc(sizer * sizeof(uint32_t));
+    for (uint32_t k = 0; k < sizer; k++) {
+      res[k] = r[sizer-1-k];
+   }
+    pr.path=res;
+    pr.size=sizer;
+
+    return pr;
+}
