@@ -1,0 +1,603 @@
+CC = gcc
+CFLAGS = -Wall -Werror -g
+LIBS = -lcunit -lpthread
+INCLUDE_HEADERS_DIRECTORY = -Iinclude
+
+sp: sp.c src/belleman.o src/graph.o  # add your other object files needed to compile your program here. !! The ordering is important !! if file_a.o depends on file_b.o, file_a.o must be placed BEFORE file_b.o in the list !
+	$(CC) $(INCLUDE_HEADERS_DIRECTORY) $(CFLAGS) -o $@ $^ $(LIBS)    
+%.o: %.c
+	$(CC) $(INCLUDE_HEADERS_DIRECTORY) $(CFLAGS) -o $@ -c $<
+
+sp2: sp2.c src/belleman2.o src/graph.o
+	$(CC) $(INCLUDE_HEADERS_DIRECTORY) $(CFLAGS) -o $@ $^ $(LIBS)
+belleman2.o: belleman2.c
+	$(CC) $(INCLUDE_HEADERS_DIRECTORY) $(CFLAGS) -o $@ -c $<
+	
+clean:
+	@rm -f src/*.o
+	@rm -f sp
+	@rm -f sp2  # add this line to remove sp2 executable
+	@rm -f out
+	@rm -f *.bin
+	@echo === Cleaned ! ===
+
+tests: sp.c sp2.c src/belleman.c src/belleman2.c src/graph.c  # include sp2.c and belleman2.c
+	@echo ===cppcheck on $^===
+	@cppcheck --enable=all --suppress=missingIncludeSystem ./$^
+	@echo ===gcc on $^===
+	@gcc -Wall -Werror -o $@ $^
+	@valgrind --leak-check=full --show-leak-kinds=all ./$@ -f out_test.bin graphs/graph.bin
+
+	@echo ===sanity check on output of $@===
+	python3 python_utils/verify_output.py out_test.bin
+	@rm -f out_test.bin
+	@echo ===valgrind on $@===
+	@valgrind --leak-check=full --quiet --show-leak-kinds=all --error-exitcode=1 ./$@ -v graphs/graph.bin || (ret=$$?; rm -f $@ && exit $$ret)
+	@rm -f $@
+	@echo $@ is a Succes ! && exit 0
+
+
+.PHONY: clean tests
+///////
+
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <limits.h>
+#include <string.h>
+#include <stdbool.h>
+#include <stdint.h>
+#include "../include/graph.h"
+
+#include "../include/belleman.h"
+#include <pthread.h>
+
+//put specifications!
+
+#define NUM_THREADS 4
+
+pthread_barrier_t barrier;
+pthread_mutex_t lock; // also declare the lock as a global variable
+void* bellman_ford_thread(void *arg) ;
+
+
+dist_path *bellman_ford(link_t *links, uint32_t nb_links, uint32_t nb_nodes, uint32_t source, bool verbose) {
+    
+    dist_path *dp = (dist_path*) malloc(sizeof(dist_path));
+
+    if (dp == NULL) {
+        fprintf(stderr, "Error: memory allocation failed.\n");
+        exit(1);
+    }
+
+    dp->dist = malloc(sizeof(int64_t) * nb_nodes);
+    dp->path = malloc(sizeof(uint32_t) * nb_nodes);
+
+    if (dp->dist == NULL) {
+        fprintf(stderr, "Error: memory allocation failed.\n");
+        free(dp);
+        exit(1);
+    }
+
+    if (dp->path == NULL) {
+        fprintf(stderr, "Error: memory allocation failed.\n");
+        free(dp->dist);
+        free(dp);
+        exit(1);
+    }
+
+    
+    for (uint32_t i = 0; i < nb_nodes; i++) {
+        dp->dist[i] = INT64_MAX;
+        dp->path[i]=0;
+    }
+    dp->dist[source] = 0;  
+
+    
+    pthread_t threads[NUM_THREADS];
+    thread_args *args =  malloc(NUM_THREADS * sizeof(thread_args));
+    pthread_barrier_init(&barrier, NULL, NUM_THREADS);
+
+    //pthread_mutex_init(&lock, NULL);
+
+    for (uint32_t i = 0; i < NUM_THREADS; i++) {
+
+        uint32_t start = i*( nb_links / NUM_THREADS);
+        printf("yo im the starting point:%d\n", start);
+        
+        uint32_t end = (i + 1)*(nb_links / NUM_THREADS);
+        if (i == NUM_THREADS-1) end = nb_links;
+        printf("yo im the ending point:%d\n", end);
+
+       // if (i == NUM_THREADS-1) end = nb_links;
+        args[i].links = links;
+        args[i].nb_nodes = nb_nodes;
+        args[i].source = source;
+        args[i].dp = dp;
+        args[i].start = start;
+        args[i].end = end;
+        args[i].verbose=verbose;
+
+        pthread_create(&threads[i], NULL, bellman_ford_thread, (void*)&args[i]);
+    } 
+
+    for (uint32_t i = 0; i < NUM_THREADS; i++) {
+      pthread_join(threads[i], NULL);
+      
+   }
+   pthread_barrier_destroy(&barrier);
+    //pthread_mutex_destroy(&lock);
+    //free(args);
+    return dp;  
+}
+
+void* bellman_ford_thread(void *arg) {
+
+    thread_args *args = (thread_args*) arg;
+
+    link_t *links = args->links;
+    uint32_t nb_nodes = args->nb_nodes;
+    uint32_t source = args->source;
+    dist_path *dp = args->dp;
+    uint32_t start = args->start;
+    uint32_t end = args->end;
+    bool verbose=args->verbose;
+
+    //bool verbose = true;
+
+
+    for (uint32_t i = 0; i < nb_nodes ; i++) {//ou -1?
+
+        for (uint32_t j = start; j < end; j ++) {
+
+
+            uint32_t from = links[j].from;
+            uint32_t to = links[j].to;
+            int32_t cost = links[j].cost;
+
+            
+            if (dp->dist[from] != INT64_MAX && dp->dist[to] > dp->dist[from] + cost) {
+                dp->dist[to] = dp->dist[from] + cost;
+                dp->path[to] = from;
+            }
+        }pthread_barrier_wait(&barrier);
+    }
+    pthread_barrier_wait(&barrier);
+    // cycle -
+    
+    for (uint32_t j = start; j < end; j ++) {
+            
+        uint32_t from = links[j].from;
+        uint32_t to = links[j].to;
+        int32_t cost = links[j].cost;
+
+        if (dp->dist[from] != INT64_MAX && dp->dist[to] > dp->dist[from] + cost) {
+            //pthread_mutex_lock(&lock);
+
+            if (verbose) printf("Negative cycle detected\n");
+
+            for (uint32_t i = 0; i < nb_nodes; i++) {
+                dp->dist[i] = INT64_MAX;
+                dp->path[i] = 0;
+            }
+            dp->dist[source] = 0;
+            //pthread_mutex_unlock(&lock);
+      
+            pthread_exit(NULL);
+        }
+    }
+    pthread_exit(NULL);
+    free(args);
+}
+
+
+// specification
+
+void *find_max_node_dist(void *thread_data_ptr);
+
+typedef struct {
+    int64_t *dist;
+    uint32_t start_node;
+    uint32_t end_node;
+    NodeDist *max_node_dist;
+} ThreadData;
+
+NodeDist* get_max(int64_t *dist, uint32_t nb_nodes, uint32_t s) {
+
+    NodeDist *max_node_dist = (NodeDist*) malloc(sizeof(NodeDist));
+    if (max_node_dist == NULL) {
+        fprintf(stderr, "Error: memory allocation failed.\n");
+        exit(1);
+    }
+    
+    uint32_t nodes_per_thread = nb_nodes / NUM_THREADS;
+    ThreadData *thread_data= malloc(NUM_THREADS * sizeof(ThreadData));;
+    
+    pthread_t threads[NUM_THREADS];
+
+    // Create the threads
+    
+    for (uint32_t i = 0; i < NUM_THREADS; i++) {
+        thread_data[i].dist = dist;
+        
+        thread_data[i].max_node_dist = max_node_dist;
+        thread_data[i].start_node = i * nodes_per_thread;
+        thread_data[i].end_node = (i + 1) * nodes_per_thread;
+
+        if (i == NUM_THREADS - 1) {
+            thread_data[i].end_node = nb_nodes;
+        }
+
+        pthread_create(&threads[i], NULL, find_max_node_dist, (void*) &thread_data[i]);
+    }
+
+    // Join the threads
+    for (uint32_t i = 0; i < NUM_THREADS; i++) {
+        pthread_join(threads[i], NULL);
+    }
+
+    return max_node_dist;
+}
+
+void *find_max_node_dist(void *thread_data_ptr) {
+    ThreadData *thread_data = (ThreadData*) thread_data_ptr;
+    int64_t *dist = thread_data->dist;
+    
+    uint32_t start_node = thread_data->start_node;
+    uint32_t end_node = thread_data->end_node;
+    NodeDist *max_node_dist = thread_data->max_node_dist;
+
+    int64_t max_cost = INT64_MIN;
+    uint32_t max_node = start_node;
+
+    for (uint32_t node_idx = start_node; node_idx < end_node; node_idx++) {
+        if (node_idx != start_node && dist[node_idx] != INT64_MAX && dist[node_idx] > max_cost) {
+            max_cost = dist[node_idx];
+            max_node = node_idx;
+        }
+    }
+
+    //pthread_mutex_lock(&max_node_dist->lock);
+    if (max_cost > max_node_dist->max_cost) {
+        max_node_dist->max_cost = max_cost;
+        max_node_dist->max_node = max_node;
+    }
+    //pthread_mutex_unlock(&max_node_dist->lock);
+
+    pthread_exit(NULL);
+    free(thread_data);
+}
+
+
+//specification
+
+NODEShort* get_path(uint32_t dest, uint32_t source, uint32_t *path,uint32_t nb_nodes) {
+    
+    NODEShort *result  = (NODEShort*) malloc(sizeof(NODEShort));
+    if (result == NULL) {
+        fprintf(stderr, "Error: memory allocation failed.\n");
+        exit(1);
+    }
+
+    result->length = 0;
+    
+    
+    result->short_path = malloc(nb_nodes *sizeof(uint32_t));
+
+    if (result->short_path == NULL) {
+        fprintf(stderr, "Error: memory allocation failed.\n");
+        free(result);
+        exit(1);
+        return result;
+    }
+
+    uint32_t*ri= malloc(nb_nodes * sizeof(uint32_t));
+    if (ri == NULL) {
+        fprintf(stderr, "Error: memory allocation failed.\n");
+        free(result);
+        free(result->short_path);
+        exit(1);
+        return result;
+    }
+
+    if (ri == NULL) {
+        return NULL;
+    }
+    
+    uint32_t i = dest;
+    uint32_t j = 1;
+    
+    ri[0]=dest;
+    
+    result->length++;
+    while (i != source) {
+        ri[j]=path[i];
+        i = path[i];
+        result->length++;
+        j++;
+        
+    }
+    for (uint32_t k = 0; k < result->length; k++) {
+      result->short_path[k] = ri[result->length-1-k];
+   }
+    result->short_path=realloc(result->short_path,(result->length)*sizeof(uint32_t));
+
+    free(ri);
+
+    return result;
+
+}
+/////
+
+#include <errno.h>
+#include <getopt.h>
+#include <inttypes.h>
+#include <stdbool.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#include <arpa/inet.h>
+#include <time.h>
+// /!\ ATTENTION : vous devez garder ces deux include dans votre code.
+// Ils remplacent <endian.h> et <semaphore.h> pour fournir une compatibilite
+// avec macOS.
+
+
+//#include "include/portable_endian.h"
+//#include "include/portable_semaphore.h"
+
+// Tant que vous n'avez pas vu la lecture des fichiers (module 5 INGInious),
+// vous pouvez utiliser un fichier header pour definir vos graphes.
+// Ce fichier a ete genere en utilisant le script fourni avec l'implementation
+// Python.
+// #include "include/small_instance.h"
+
+// Votre architecture de code doit etre propre et bien structuree.
+// Nous vous demandons d'implementer un maximum des fonctionnalites independantes
+// dans des fichiers differents.
+// Par exemple, toutes les definitions de fonctions qui concernent
+// la creation et manipulation de graphe devrait se retrouver dans include/graph.h
+// et le code source lie dans src/graph.c.
+// Vous devriez faire de meme pour tous les autres modules de votre code.
+#include "include/graph.h"
+#include "include/belleman.h"
+
+
+//#include "include/utils.h"
+
+typedef struct {
+    FILE *input_file;
+    FILE *output_stream;
+    uint8_t nb_threads;
+    bool verbose;
+} args_t;
+
+void usage(char *prog_name) {
+    fprintf(stderr, "UTILISATION:\n");
+    fprintf(stderr, "    %s [OPTIONS] input_file\n", prog_name);
+    fprintf(stderr,
+            "    input_file: chemin vers le fichier d'instance representant le "
+            "graphe a traiter.\n");
+    fprintf(
+        stderr,
+        "    -f output_file: chemin vers le fichier qui contiendra le resultat "
+        "de programme, au format specifie dans l'enonce. Defaut : stdout.\n");
+    fprintf(stderr,
+            "    -n n_threads: nombre de threads de calcul executant "
+            "l'algorithme de plus court chemin. Defaut : 4.\n");
+    fprintf(stderr,
+            "    -v: autorise les messages de debug. Si ce n'est pas active, "
+            "aucun message de ce type ne peut etre affiche, excepte les "
+            "messages d'erreur en cas d'echec. Defaut : false.\n");
+}
+
+int parse_args(args_t *args, int argc, char *argv[]) {
+    memset(args, 0, sizeof(args_t));
+    args->nb_threads = 4;
+    args->verbose = false;
+    args->output_stream = stdout;
+    args->input_file = NULL;
+    int opt;
+    while ((opt = getopt(argc, argv, "hn:vf:")) != -1) {
+        switch (opt) {
+            case 'n':
+                args->nb_threads = atoi(optarg);
+                if (args->nb_threads == 0) {
+                    fprintf(stderr,
+                            "Le nombre de threads de calcul doit etre superieur a 0 ! Recu : %s\n",
+                            optarg);
+                    return -1;
+                }
+                break;
+            case 'v':
+                args->verbose = true;
+                break;
+            case 'f':
+#ifdef LEPL1503_USE_HEADER_INSTANCE
+                fprintf(stderr,
+                        "Vous utilisez un fichier header comme instance de "
+                        "graphe. Cela annule l'utilisation de l'argument donne "
+                        "par -f. Veuillez retirer l'include au header si ce "
+                        "n'est pas le comportement desire.\n");
+                break;
+#endif  // LEPL1503_USE_HEADER_INSTANCE
+                args->output_stream = fopen(optarg, "w+");
+                if (args->output_stream == NULL) {
+                    fprintf(stderr,
+                            "Impossible to open the output file %s: %s\n",
+                            optarg, strerror(errno));
+                    return -1;
+                }
+                break;
+            case '?':
+            case 'h':
+                usage(argv[0]);
+                return 1;
+            default:
+                usage(argv[0]);
+                return -1;
+        }
+    }
+
+#ifdef LEPL1503_USE_HEADER_INSTANCE
+    fprintf(stderr,
+            "Vous utilisez un fichier header comme instance de "
+            "graphe. Cela annule l'utilisation du fichier d'instance en entree "
+            "donne en argument. Veuillez retirer l'include au header si ce "
+            "n'est pas le comportement desire.\n");
+#else
+    if (optind == argc) {
+        fprintf(stderr,
+                "Vous devez fournir un fichier d'instance en entree !\n");
+        return -1;
+    }
+
+    if (NULL == (args->input_file = fopen(argv[optind], "r"))) {
+        fprintf(stderr,
+                "Impossible d'ouvrir le fichier qui contient l'instance de graphe %s: %s\n",
+                argv[optind], strerror(errno));
+        return -1;
+    }
+#endif  // LEPL1503_USE_HEADER_INSTANCE
+
+    return 0;
+}
+
+int main(int argc, char *argv[]) {
+   // printf("this is code 2!");
+    clock_t start_time = clock();
+    args_t args;
+    int err = parse_args(&args, argc, argv);
+
+    if (err == -1) {
+        exit(EXIT_FAILURE);
+    } else if (err == 1) {
+        exit(EXIT_SUCCESS);
+    }
+    
+
+    graph_t *g;
+    g = readgraph(args.input_file); 
+    //printf("this is code 2!");
+    
+    if (args.verbose) {
+        // Veillez a bien utiliser les macros PRI pour afficher vos valeurs.
+        // Cela permet de gerer les differentes plateformes comme le raspberry.
+        
+        fprintf(stderr, "Nombre de noeuds: %" PRIu32 "\n", g->nb_nodes);
+        fprintf(stderr, "Nombre de liens: %" PRIu32 "\n", g->nb_links);
+        uint32_t i;
+        for (i = 0; i < g->nb_links; i++) {
+            fprintf(stderr,
+                    "Lien: %" PRIu32 " -> %" PRIu32 " (cout de %" PRIi32 ")\n",
+                    g->links[i].from,
+                    g->links[i].to,
+                    g->links[i].cost);
+        }
+        fprintf(stderr, "\n");
+    }
+
+    uint32_t source;
+    for (source = 0; source < g->nb_nodes; source++) {
+
+        dist_path* dp=bellman_ford(g->links, g->nb_links, g->nb_nodes, source, args.verbose);     
+        
+        NodeDist *max_node_dist=get_max(dp->dist, g->nb_nodes, source);                                      
+       
+        NODEShort *result= get_path(max_node_dist->max_node, source, dp->path,g->nb_nodes);  
+
+        if(args.output_stream == stdout || args.output_stream == stderr) { 
+            
+            if(source==0) {
+                fprintf(args.output_stream,"nombre de noeuds : %" PRIu32 "\n\n",g->nb_nodes);
+            }
+            fprintf(args.output_stream,"noeud FROM: %" PRIu32 "\n",source);
+
+            fprintf(args.output_stream,"noeud TO: %" PRIu32 "\n",max_node_dist->max_node);
+
+            fprintf(args.output_stream,"poids du path: %" PRIi64 "\n",max_node_dist->max_cost);
+
+            fprintf(args.output_stream,"nombre de noeuds dans path : %" PRIu32 "\n",  result->length);
+
+            fprintf(args.output_stream,"path: ");
+                
+            for (uint32_t i = 0; i < result->length; i++) {
+                fprintf(stdout, "%" PRIu32 "\n ", dp->path[i]);
+            }
+            
+
+            fprintf(args.output_stream, "\n\n");
+
+        } else {
+             if(source==0) {
+                uint32_t be_number_node = htonl(g->nb_nodes);
+                fwrite(&be_number_node, sizeof(uint32_t), 1,args.output_stream);
+            }
+            uint32_t be_source_node = htonl(source); 
+            fwrite(&be_source_node, sizeof(uint32_t), 1,args.output_stream );
+
+            
+            uint32_t be_dest_node = htonl(max_node_dist->max_node);
+            fwrite(&be_dest_node, sizeof(uint32_t), 1, args.output_stream); 
+            
+
+            int64_t be_distance = htonl(max_node_dist->max_cost);
+            fwrite(&be_distance, sizeof(int64_t), 1, args.output_stream);
+
+            
+            uint32_t be_len_path = htonl(result->length);
+            fwrite(&be_len_path, sizeof(uint32_t), 1, args.output_stream); 
+
+
+            
+            for (uint32_t i = 0; i < result->length; i++) {
+                
+                uint32_t be_p_node = htonl(dp->path[i]);
+                fwrite(&be_p_node, sizeof(uint32_t), 1, args.output_stream);
+                
+            }   
+        }
+        if (args.verbose) {
+            fprintf(stderr, "noeud %" PRIi32 "," ,source);
+            
+            fprintf(stderr, "distance:\n");
+            for (uint64_t i = 0; i < g-> nb_nodes; i++) fprintf(stderr, "%" PRIu64 " -> %" PRIi64 "\n", i, dp->dist[i]);
+    
+            fprintf(stderr, "show path :"); 
+            for (uint64_t i = 0; i < g-> nb_nodes; i++) fprintf(stderr, " %" PRIi32 ",", dp->path[i]);
+            
+            fprintf(stderr, "\n"); 
+            fprintf(stderr, "Chemin vers noeud: \n");
+            
+            for (uint32_t dest = 0; dest < g->nb_nodes; dest++) {
+                NODEShort *r = get_path(dest, source, dp->path,g->nb_nodes);                               
+                fprintf(stderr, "dest: %" PRIi32 , dest);
+                
+                fprintf(stderr, "[");
+                for (uint32_t i = 0; i < r->length; i++) fprintf(stderr, "%" PRIu32 " ", r->short_path[i]);
+                fprintf(stderr, "]\n");
+                free(r);
+            }
+            fprintf(stderr, "\n");
+        }
+        free(dp);free(max_node_dist);free(result);
+        
+    }
+
+    
+    free(g);
+    if (args.input_file != NULL) fclose(args.input_file);
+    if (args.output_stream != stdout) fclose(args.output_stream);
+    clock_t end_time = clock();
+    double total_time = (double)(end_time - start_time) / CLOCKS_PER_SEC;
+    printf("Total execution time: %f seconds\n", total_time);
+    return 0;
+}
+
+
+
+
+
+
